@@ -1,0 +1,11 @@
+version: '1'
+services:
+  bot:
+    container_name: 'Zoo-BOT'
+    build:
+      context: .
+    stop_signal: SIGINT
+    restart: unless-stopped
+    command: "python main.py -a 1"
+    volumes:
+      - .:/app
