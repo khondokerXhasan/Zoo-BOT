@@ -1,6 +1,6 @@
 # [![Static Badge](https://img.shields.io/badge/Telegram-Bot%20Link-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](http://t.me/zoo_story_bot/game?startapp=ref1827015632)
  
-## Tomarket Bot
+## Zoo Story Bot
  
 > **Recommendation**: Use **Python 3.10**
  
