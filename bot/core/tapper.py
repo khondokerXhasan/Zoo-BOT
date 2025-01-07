@@ -128,26 +128,27 @@ class Tapper:
         proxy_dict = await self._parse_proxy(proxy)
         self.tg_client.proxy = proxy_dict
         try:
-            async with self.tg_client:
-                self.peer = await self.resolve_peer_with_retry(chat_id=self.bot_username, username=self.bot_username)
-                ref_id = str(settings.REF_LINK)
-                refer_id = choices([ref_id, self.link], weights=[70, 30], k=1)[
-                    0]  # this is sensitive data don’t change it (if ydk)
-                self.refer_id = refer_id.split('=')[1]
-                web_view = await self.tg_client.invoke(
-                    RequestAppWebView(
-                        peer=self.peer,
-                        platform='android',
-                        app=InputBotAppShortName(
-                            bot_id=self.peer,
-                            short_name=self.short_name
-                        ),
-                        write_allowed=True,
-                        start_param=self.refer_id
+            async with self.lock:
+                async with self.tg_client:
+                    self.peer = await self.resolve_peer_with_retry(chat_id=self.bot_username, username=self.bot_username)
+                    ref_id = str(settings.REF_LINK)
+                    refer_id = choices([ref_id, self.link], weights=[70, 30], k=1)[
+                        0]  # this is sensitive data don’t change it (if ydk)
+                    self.refer_id = refer_id.split('=')[1]
+                    web_view = await self.tg_client.invoke(
+                        RequestAppWebView(
+                            peer=self.peer,
+                            platform='android',
+                            app=InputBotAppShortName(
+                                bot_id=self.peer,
+                                short_name=self.short_name
+                            ),
+                            write_allowed=True,
+                            start_param=self.refer_id
+                        )
                     )
-                )
-                auth_url = web_view.url
-                return await self._extract_tg_web_data(auth_url)
+                    auth_url = web_view.url
+                    return await self._extract_tg_web_data(auth_url)
 
         except InvalidSession as error:
             raise error
@@ -311,130 +312,134 @@ class Tapper:
         retries = 0
         peer = None
         while retries < max_retries:
-            async with self.tg_client:
-                try:
-                    parsed_link = link if 'https://t.me/+' in link else link[13:]
-                    username = parsed_link if "/" not in parsed_link else parsed_link.split("/")[
-                        0]
+            async with self.lock:
+                async with self.tg_client:
+                    try:
+                        parsed_link = link if 'https://t.me/+' in link else link[13:]
+                        username = parsed_link if "/" not in parsed_link else parsed_link.split("/")[
+                            0]
 
-                    # Refresh Chat list
-                    await self.get_dialog(username=username)
+                        # Refresh Chat list
+                        await self.get_dialog(username=username)
 
-                    chat_info = await self.tg_client.get_chat(username)
+                        chat_info = await self.tg_client.get_chat(username)
 
-                    participants = await self.tg_client.get_chat_members_count(chat_info.id)
-                    logger.info(
-                        f"{self.session_name} | Channel <g>{username}</g> has <g>{format_number(participants)}</g> members")
+                        participants = await self.tg_client.get_chat_members_count(chat_info.id)
+                        logger.info(
+                            f"{self.session_name} | Channel <g>{username}</g> has <g>{format_number(participants)}</g> members")
 
-                    chat_type = str(getattr(chat_info, 'type', '')).upper()
+                        chat_type = str(getattr(chat_info, 'type', '')).upper()
 
-                    if 'CHANNEL' in chat_type or 'SUPERGROUP' in chat_type:
-                        try:
-                            await self.tg_client.get_chat_member(chat_info.id, "me")
-                            logger.info(
-                                f"{self.session_name} | Already a member of <y>{chat_info.title}</y>")
-                            return
-
-                        except UserNotParticipant:
+                        if 'CHANNEL' in chat_type or 'SUPERGROUP' in chat_type:
                             try:
-                                chat = await self.tg_client.join_chat(username)
-                                chat_id = chat.id
-                                logger.success(
-                                    f"{self.session_name} | Successfully joined to <g>{chat.title}</g>")
-
-                                await asyncio.sleep(delay=5)
-                                peer = await self.resolve_peer_with_retry(chat_id, username)
-                                if peer:
-                                    await self.mute_and_archive_chat(chat, peer, username)
+                                await self.tg_client.get_chat_member(chat_info.id, "me")
+                                logger.info(
+                                    f"{self.session_name} | Already a member of <y>{chat_info.title}</y>")
                                 return
 
-                            except FloodWait as error:
-                                wait_time = error.value + 15 + (retries + 2)
-                                logger.info(
-                                    f"{self.session_name} | FloodWait required | Wait <e>{wait_time}</e> seconds.")
+                            except UserNotParticipant:
+                                try:
+                                    chat = await self.tg_client.join_chat(username)
+                                    chat_id = chat.id
+                                    logger.success(
+                                        f"{self.session_name} | Successfully joined to <g>{chat.title}</g>")
 
-                                await asyncio.sleep(wait_time)
-                                retries += 1
-                                continue
+                                    await asyncio.sleep(delay=5)
+                                    peer = await self.resolve_peer_with_retry(chat_id, username)
+                                    if peer:
+                                        await self.mute_and_archive_chat(chat, peer, username)
+                                    return
 
-                    else:
+                                except FloodWait as error:
+                                    wait_time = error.value + \
+                                        15 + (retries + 2)
+                                    logger.info(
+                                        f"{self.session_name} | FloodWait required | Wait <e>{wait_time}</e> seconds.")
+
+                                    await asyncio.sleep(wait_time)
+                                    retries += 1
+                                    continue
+
+                        else:
+                            logger.error(
+                                f"{self.session_name} | Chat type not supported: {chat_type} for {username}")
+                            return
+
+                    except (UsernameInvalid, UsernameNotOccupied) as e:
                         logger.error(
-                            f"{self.session_name} | Chat type not supported: {chat_type} for {username}")
+                            f"{self.session_name} | Invalid username or chat doesn't exist: {username}")
                         return
 
-                except (UsernameInvalid, UsernameNotOccupied) as e:
-                    logger.error(
-                        f"{self.session_name} | Invalid username or chat doesn't exist: {username}")
-                    return
-
-                except RPCError as e:
-                    logger.error(
-                        f"{self.session_name} | Chat <y>{username}</y> error: {str(e)}")
-                    if "CHANNEL_PRIVATE" in str(e):
+                    except RPCError as e:
                         logger.error(
-                            f"{self.session_name} | This is a private channel and requires an invite link")
-                    raise
+                            f"{self.session_name} | Chat <y>{username}</y> error: {str(e)}")
+                        if "CHANNEL_PRIVATE" in str(e):
+                            logger.error(
+                                f"{self.session_name} | This is a private channel and requires an invite link")
+                        raise
 
-                except (UserDeactivated, UserDeactivatedBan, UserRestricted,
-                        AuthKeyUnregistered, Unauthorized) as e:
-                    logger.error(
-                        f"<light-yellow>{self.session_name}</light-yellow> | Account error: {str(e)}")
+                    except (UserDeactivated, UserDeactivatedBan, UserRestricted,
+                            AuthKeyUnregistered, Unauthorized) as e:
+                        logger.error(
+                            f"<light-yellow>{self.session_name}</light-yellow> | Account error: {str(e)}")
+                        return
+
+                    except Exception as error:
+                        logger.error(
+                            f"<light-yellow>{self.session_name}</light-yellow> | Error while joining channel: {error} {link}")
+                        await asyncio.sleep(delay=3)
+                        retries += 1
+                        continue
+
                     return
-
-                except Exception as error:
-                    logger.error(
-                        f"<light-yellow>{self.session_name}</light-yellow> | Error while joining channel: {error} {link}")
-                    await asyncio.sleep(delay=3)
-                    retries += 1
-                    continue
-
-                return
 
     async def change_name(
         self,
         symbol: str
     ) -> bool:
-        async with self.tg_client:
-            try:
-                me = await self.tg_client.get_me()
-                first_name = me.first_name
-                last_name = me.last_name if me.last_name else ''
-                tg_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+        async with self.lock:
+            async with self.tg_client:
+                try:
+                    me = await self.tg_client.get_me()
+                    first_name = me.first_name
+                    last_name = me.last_name if me.last_name else ''
+                    tg_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
 
-                if symbol not in tg_name:
-                    changed_name = f'{first_name}{symbol}'
-                    await self.tg_client.update_profile(first_name=changed_name)
-                    logger.info(
-                        f"{self.session_name} | First name changed <g>{first_name}</g> to <g>{changed_name}</g>")
-                    await asyncio.sleep(delay=randint(20, 30))
-                return True
-            except Exception as error:
-                logger.error(
-                    f"<light-yellow>{self.session_name}</light-yellow> | Error while changing tg name : {error}")
-                return False
+                    if symbol not in tg_name:
+                        changed_name = f'{first_name}{symbol}'
+                        await self.tg_client.update_profile(first_name=changed_name)
+                        logger.info(
+                            f"{self.session_name} | First name changed <g>{first_name}</g> to <g>{changed_name}</g>")
+                        await asyncio.sleep(delay=randint(20, 30))
+                    return True
+                except Exception as error:
+                    logger.error(
+                        f"<light-yellow>{self.session_name}</light-yellow> | Error while changing tg name : {error}")
+                    return False
 
     async def remove_symbol(
         self,
         symbol: str
     ) -> bool:
-        async with self.tg_client:
-            try:
-                me = await self.tg_client.get_me()
-                first_name = me.first_name
-                last_name = me.last_name if me.last_name else ''
-                tg_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+        async with self.lock:
+            async with self.tg_client:
+                try:
+                    me = await self.tg_client.get_me()
+                    first_name = me.first_name
+                    last_name = me.last_name if me.last_name else ''
+                    tg_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
 
-                if symbol in tg_name:
-                    changed_name = str(first_name).replace(symbol, "")
-                    await self.tg_client.update_profile(first_name=changed_name)
-                    logger.info(
-                        f"{self.session_name} | First name changed <g>{first_name}</g> to <g>{changed_name}</g>")
-                    await asyncio.sleep(delay=randint(20, 30))
-                return True
-            except Exception as error:
-                logger.error(
-                    f"<light-yellow>{self.session_name}</light-yellow> | Error while changing tg name : {error}")
-                return False
+                    if symbol in tg_name:
+                        changed_name = str(first_name).replace(symbol, "")
+                        await self.tg_client.update_profile(first_name=changed_name)
+                        logger.info(
+                            f"{self.session_name} | First name changed <g>{first_name}</g> to <g>{changed_name}</g>")
+                        await asyncio.sleep(delay=randint(20, 30))
+                    return True
+                except Exception as error:
+                    logger.error(
+                        f"<light-yellow>{self.session_name}</light-yellow> | Error while changing tg name : {error}")
+                    return False
 
     async def make_request(
         self,
@@ -633,7 +638,7 @@ class Tapper:
         onboarding_id: int
     ) -> Optional[dict]:
         payload = {"data": onboarding_id}
-        response = await self.make_request(http_client=http_client, method="POST", url=onboardingComplete_api, payload=payload, api_key=self.api_key, sleep=5)
+        response = await self.make_request(http_client=http_client, method="POST", url=onboardingComplete_api, payload=payload, api_key=self.api_key, sleep=10)
         return response
 
     async def alliance_info(
@@ -934,7 +939,7 @@ class Tapper:
                                     Quest["key"] not in CompleatedQuestsList
                                     and Quest["checkType"] in settings.TO_DO_QUEST
                                     and Quest["checkType"] not in settings.NOT_TO_DO_QUEST
-                                    and "boost" not in str(Quest["key"])
+                                    # and "boost" not in str(Quest["key"])
                                     and start_time <= current_time and end_time >= current_time
                                 ):
                                     reward = Quest["reward"]
@@ -1000,12 +1005,28 @@ class Tapper:
                                             logger.info(
                                                 f"{self.session_name} | Quiz <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
 
+                        ### Onboarding 50 After Sharing Invite Link To Friend ###
+                        await self.onboarding(http_client=http_client, onboarding_id=50)
+
                         if settings.AUTO_BUY_ANIMALS:
                             await self.buy_manager(http_client=http_client, dbAnimals=dbAnimals)
                         else:
                             if self.coins < int(settings.COIN_TO_SAVE):
                                 logger.info(
                                     f"{self.session_name} | Not enough coin to buy animals | Coin: <g>{self.coins}<g>")
+
+                        ### A Funny Mechanism To Handle Onboarding event ###
+                        TOSS = choice(
+                            ["H", "A", "S", "A", "N", "X", "K", "H", "O", "N", "D", "O", "K", "E", "R"])
+                        if TOSS == "H":
+                            # appear while changing animal position
+                            await self.onboarding(http_client=http_client, onboarding_id=40)
+                        elif TOSS == "X":
+                            # Appear While Enter In Buy Section
+                            await self.onboarding(http_client=http_client, onboarding_id=31)
+                        elif TOSS == "K":
+                            # I Don't Know
+                            await self.onboarding(http_client=http_client, onboarding_id=30)
 
                         if settings.AUTO_UPGRADE_ANIMALS:
                             await self.upgrade_manager(http_client=http_client, dbAnimals=dbAnimals)
