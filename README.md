@@ -65,8 +65,8 @@ Ensure you have **Python 3.10 or Greater** installed.
  
 ### Clone the Repository
 ```shell
-git clone https://github.com/khondokerXhasan/Zoo-BOT
-cd Zoo-BOT
+git clone https://github.com/Ashux-Xd/Zoo
+cd Zoo
 ```
  
 Then you can do automatic installation by typing:
@@ -138,5 +138,5 @@ You can also use arguments for quick start, for example:
  
 ### Contacts
  
-[Join our Telegram Channel](https://t.me/scripts_hub)
+[Join our Telegram Channel](https://t.me/Lootersera_th)
  
