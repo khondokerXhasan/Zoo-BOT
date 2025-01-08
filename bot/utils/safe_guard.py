@@ -5,7 +5,6 @@ import asyncio
 import jsbeautifier
 import subprocess
 import cloudscraper
-from datetime import datetime
 from requests.exceptions import Timeout, ConnectionError, SSLError, HTTPError, RequestException
 from aiocache import Cache, cached
 from bot.utils import logger
@@ -28,6 +27,7 @@ session.headers.update({
     'accept-language': "en-US,en;q=0.9,bn-BD;q=0.8,bn;q=0.7",
     'priority': "u=0, i"
 })
+
 # URL's
 BASE_PAGE_URL = "https://game.zoo.team"
 DETECTION_CONFIG_URL = "https://raw.githubusercontent.com/khondokerXhasan/bin/refs/heads/main/detect.json"
@@ -94,7 +94,6 @@ async def fetch_js_paths(base_url):
 
 async def get_base_api(url):
     try:
-        logger.info("Checking for changes in api...")
         response = session.get(url)
         response.raise_for_status()
         content = response.text
@@ -115,33 +114,45 @@ async def get_base_api(url):
 
 async def check_base_url(session_name):
 
-    if settings.ADVANCED_ANTI_DETECTION:
-        logger.info(f"{session_name} | 🔎 Processing advance detection...")
-        return await advance_detection(BASE_PAGE_URL, DETECTION_CONFIG_URL)
+    main_js_formats = await fetch_js_paths(BASE_PAGE_URL)
+    if main_js_formats:
+        for format_ in main_js_formats:
+
+            full_url = f"{BASE_PAGE_URL.rstrip('/')}{format_}"
+            result = await get_base_api(full_url)
+            if result:
+                return True
+        return False
+
     else:
-        main_js_formats = await fetch_js_paths(BASE_PAGE_URL)
-        if main_js_formats:
-            for format_ in main_js_formats:
-                logger.info(
-                    f"{session_name} | Trying format: <g>{format_}</g>")
-                full_url = f"{BASE_PAGE_URL.rstrip('/')}{format_}"
-                result = await get_base_api(full_url)
-                if result:
-                    logger.info(f"{session_name} | No change in api!")
-                    return True
+        logger.warning(
+            "Could not find any main.js format. Dumping page content for inspection:")
+        try:
+            response = session.get(base_url)
+            print(response.text[:1000])
+            return False
+        except Exception as e:
+            logger.error(
+                f"Error fetching the base URL for content dump: {e}")
             return False
 
-        else:
-            logger.warning(
-                "Could not find any main.js format. Dumping page content for inspection:")
-            try:
-                response = session.get(base_url)
-                print(response.text[:1000])
-                return False
-            except Exception as e:
-                logger.error(
-                    f"Error fetching the base URL for content dump: {e}")
-                return False
+
+async def safety_checker(session_name):
+
+    if settings.ADVANCED_ANTI_DETECTION:
+        logger.info(f"{session_name} | 🔎 Processing advance detection...")
+        check_api = await check_base_url(session_name)
+        if check_api:
+            return await advance_detection(BASE_PAGE_URL, DETECTION_CONFIG_URL)
+
+    else:
+        logger.info(f"{session_name} | 🔎 Checking for changes in api ...")
+        check_api = await check_base_url(session_name)
+        if check_api:
+            logger.info(f"{session_name} | No change in api!")
+            return True
+
+    return False
 
 
 @cached(ttl=1800, cache=Cache.MEMORY)  # Cache detect.json file for 30 minutes
@@ -159,7 +170,7 @@ async def load_detection_data(
             })
             response.raise_for_status()
             detection_data = response.json()["zoo-story"]["index"]
-            return [(item.split("|")[0], datetime.strptime(item.split("|")[1], '%Y-%m-%d %H:%M:%S')) for item in detection_data]
+            return detection_data
         except (Timeout, ConnectionError, SSLError, HTTPError, RequestException) as e:
             retries += 1
             logger.warning(
@@ -176,17 +187,6 @@ async def load_detection_data(
             return []
 
 
-async def get_js_file_last_modified(url):
-    try:
-        response = session.head(url)
-        response.raise_for_status()
-        last_modified = response.headers.get('Last-Modified')
-        return datetime.strptime(last_modified, '%a, %d %b %Y %H:%M:%S %Z') if last_modified else None
-    except Exception as e:
-        logger.error(f"Error fetching Last-Modified header for {url}: {e}")
-        return None
-
-
 async def advance_detection(base_url, config_url):
     js_paths = await fetch_js_paths(base_url)
     if not js_paths:
@@ -201,7 +201,7 @@ async def advance_detection(base_url, config_url):
         logger.warning("No expected JavaScript file data available.")
         return False
 
-    for file_name, expected_time in expected_files:
+    for file_name in expected_files:
         matching_path = next(
             (path for path in js_paths if file_name in path), None)
         if not matching_path:
@@ -211,27 +211,8 @@ async def advance_detection(base_url, config_url):
             logger.info(f"New files: <e>{'<r>,</r> '.join(filenames)}</e>")
             return False
 
-        full_url = f"{base_url.rstrip('/')}{matching_path}"
-        actual_time = await get_js_file_last_modified(full_url)
-
-        if actual_time != expected_time:
-            logger.warning(
-                f"Mismatch for file <y>{file_name}</y>: expected <e>{expected_time}</e>, got <e>{actual_time}</e>")
-            return False
-
     logger.info("<g>Bot is safe to run</g> ✅")
     return True
-
-
-async def format_last_modified_date(last_modified_header):
-    if last_modified_header:
-        try:
-            last_modified_date = datetime.strptime(
-                last_modified_header, '%a, %d %b %Y %H:%M:%S %Z')
-            return last_modified_date.strftime('%Y-%m-%d_%H-%M-%S')
-        except ValueError:
-            logger.warning("Could not parse Last-Modified header")
-    return None
 
 
 async def beautify_js(content):
@@ -242,19 +223,12 @@ async def beautify_js(content):
 
 async def download_file(url, save_dir):
     filename = url.split("/")[-1]
-    base_filename, extension = os.path.splitext(filename)
 
     response = session.get(url)
     if response.status_code != 200:
         logger.warning(
             f"Failed to download {url}, status code: {response.status_code}")
         return
-
-    last_modified_header = response.headers.get('Last-Modified')
-    last_modified_date = await format_last_modified_date(last_modified_header)
-
-    if last_modified_date:
-        filename = f"{base_filename}_{last_modified_date}{extension}"
 
     save_path = os.path.join(save_dir, filename)
 
@@ -289,7 +263,7 @@ async def save_js_files(js_paths):
         full_url = f"{BASE_PAGE_URL.rstrip('/')}{js_path}"
         await download_file(full_url, save_directory)
 
-    await clean_up_old_files(save_directory, max_files=10)
+    await clean_up_old_files(save_directory)
 
 
 def check_for_updates():
