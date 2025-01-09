@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     USE_RANDOM_DELAY_IN_RUN: bool = True
     START_DELAY: list[int] = [30, 60]
 
+    AUTO_JOIN_ALLIANCE: bool = True
+    ALLIANCE_JOIN_FEE: int = 1000
+    ALLIANCE_ID: int = 2150
+    
     AUTO_DO_TASKS: bool = True
     AUTO_DO_QUIZZES: bool = True
 

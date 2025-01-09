@@ -697,7 +697,16 @@ class Tapper:
         payload = {"data": "instant"}
         response = await self.make_request(http_client=http_client, method="POST", url=autoFeedBuy_api, payload=payload, api_key=self.api_key, sleep=10)
         return response
-
+    
+    async def join_alliance(
+        self,
+        http_client: CloudflareScraper,
+        alliance_id: int
+    ) -> Optional[dict]:
+        payload = {"data": alliance_id}
+        response = await self.make_request(http_client=http_client, method="POST", url=allianceJoin_api, payload=payload, api_key=self.api_key, sleep=10)
+        return response
+        
     async def buy_manager(
         self,
         http_client: CloudflareScraper,
@@ -806,7 +815,7 @@ class Tapper:
                         can_run = False
                         logger.warning(
                             "<y>Detected change index in js file. Contact me to check if it's safe to continue</y>: <g>https://t.me/scripts_hub</g>")
-                        return end_at
+                        return round(end_at / 60)
 
                     if can_run:
                         self.tg_web_data = await self.get_tg_web_data(proxy=proxy)
@@ -843,7 +852,8 @@ class Tapper:
                             dbQuizzes = dbData.get('dbQuizzes', [])
                             dbAutoFeed = dbData.get('dbAutoFeed', [])
                             self.feedData = all_data_.get('feed', {})
-
+                            self.alliance = all_data_.get('alliance', {})
+                            
                         ### Define User id ###
                         self.user_id = profile["id"]
 
@@ -855,7 +865,7 @@ class Tapper:
                         self.coins = hero.get('coins', None)
                         self.tph = hero.get('tph', None)
                         logger.info(
-                            f"{self.session_name} | Animals: <g>{len(self.animals)}</g> | Token: <g>{format_number(self.tokens)}</g> - Coin: <g>{format_number(self.coins)}</g> - TPH: <g>{format_number(self.tph)}</g>")
+                            f"{self.session_name} | Animals: <g>{len(self.animals)}</g> | TPH: <g>{format_number(self.tph)}</g> - Token: <g>{format_number(self.tokens)}</g> - Coin: <g>{format_number(self.coins)}</g>")
 
                         ### Data After (Activity) ###
                         after_data = await self.data_after(http_client=http_client)
@@ -879,6 +889,35 @@ class Tapper:
                                         logger.info(
                                             f"{self.session_name} | <g>Daily Claimed</g> - day: <g>{day}</g> - rewarded: <g>+{format_number(reward)}</g>")
 
+                        ### Alliance info ###
+                        if self.alliance:
+                            allianceName = self.alliance.get("name", "Not Found")
+                            allianceLevel = self.alliance.get("level", 0)
+                            logger.info(
+                                f"{self.session_name} | Alliance Name: <g>{allianceName}</g> - Level: <g>{allianceLevel}</g>")
+                        else:
+                            if settings.AUTO_JOIN_ALLIANCE and int(settings.ALLIANCE_JOIN_FEE) >= 1000 and self.coins > int(settings.ALLIANCE_JOIN_FEE):
+                                alliance_id = int(settings.ALLIANCE_ID)
+                                join_res = await self.join_alliance(http_client=http_client, alliance_id=alliance_id)
+                                if join_res.get('success', None):
+                                    hero = join_res.get('data', {}).get('hero', {})
+                                    self.alliance = join_res.get('data', {}).get('alliance', {})
+                                    tphAlliance = hero.get('tphAlliance', 0)
+                                    self.coins = hero.get('coins', self.coins)
+                                    enterFee = self.alliance.get('enterFee', 0)
+                                    name = self.alliance.get('name', 0)
+                                    logger.success(
+                                        f"{self.session_name} | <g>Successfully Joined Alliance</g> | Name: <g>{name}</g> | Cost: <r>-{format_number(enterFee)}</r> | TPH: <g>+{format_number(tphAlliance)}</g>")
+                                else:
+                                    logger.warning(
+                                        f"{self.session_name} | Something went wrong while joining alliance. response: {join_res}")
+                            elif int(settings.ALLIANCE_JOIN_FEE) >= 1000:
+                                logger.warning(
+                                    f"{self.session_name} | Alliance join fee should be 1000 or max")
+                            elif int(settings.ALLIANCE_JOIN_FEE) > self.coins:
+                                logger.info(
+                                    f"{self.session_name} | Insufficient balance to join alliance")
+                            
                         ### Quests Progress ###
                         QuestsProgress = await self.quests_progress(http_client=http_client)
                         CompleatedQuestsList = []
@@ -1052,7 +1091,7 @@ class Tapper:
                                     logger.success(
                                         f"{self.session_name} | <y>Insufficient balance to buy AutoFeed</y>")
                             else:
-                                logger.success(
+                                logger.info(
                                     f"{self.session_name} | Auto Feeding in progress... ")
                             nextFeedTime = self.feedData.get('nextFeedTime')
                             nextFeedTimestamp = convert_utc_to_local(
