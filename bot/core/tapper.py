@@ -861,9 +861,9 @@ class Tapper:
                         await self.onboarding(http_client=http_client, onboarding_id=1)
 
                         ### User Data ###
-                        self.tokens = hero.get('tokens', None)
-                        self.coins = hero.get('coins', None)
-                        self.tph = hero.get('tph', None)
+                        self.tokens = hero.get('tokens', 0)
+                        self.coins = hero.get('coins', 0)
+                        self.tph = hero.get('tph', 0)
                         logger.info(
                             f"{self.session_name} | Animals: <g>{len(self.animals)}</g> | TPH: <g>{format_number(self.tph)}</g> - Token: <g>{format_number(self.tokens)}</g> - Coin: <g>{format_number(self.coins)}</g>")
 
@@ -1037,6 +1037,7 @@ class Tapper:
                                         if claim.get('success', False):
                                             logger.info(
                                                 f"{self.session_name} | Quiz <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
+                                            self.coins = claim['data']['hero']["coins"]
 
                         ### Onboarding 50 After Sharing Invite Link To Friend ###
                         await self.onboarding(http_client=http_client, onboarding_id=50)
