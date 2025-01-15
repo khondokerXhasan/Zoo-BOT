@@ -102,6 +102,7 @@ quizResultSet_api = f"{BASE_API}/quiz/result/set"  # √
 quizClaim_api = f"{BASE_API}/quiz/claim"  # √
 autoFeedBuy_api = f"{BASE_API}/autofeed/buy"  # √
 
+background_task: Optional[asyncio.Task[None]] = None
 
 class Tapper:
     def __init__(
@@ -811,6 +812,7 @@ class Tapper:
         user_agent: str,
         proxy: str | None
     ) -> None:
+        global background_task
 
         if settings.USE_RANDOM_DELAY_IN_RUN:
             random_delay = randint(
