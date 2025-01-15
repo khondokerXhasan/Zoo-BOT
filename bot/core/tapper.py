@@ -102,6 +102,8 @@ quizResultSet_api = f"{BASE_API}/quiz/result/set"  # √
 quizClaim_api = f"{BASE_API}/quiz/claim"  # √
 autoFeedBuy_api = f"{BASE_API}/autofeed/buy"  # √
 
+background_task: Optional[asyncio.Task[None]] = None
+
 
 class Tapper:
     def __init__(
@@ -471,6 +473,7 @@ class Tapper:
                     current_time = int(time())
                     api_hash = hashlib.md5(
                         f"{current_time}_{json.dumps(payload)}".encode('utf-8')).hexdigest()
+
                     http_client.headers['Api-Key'] = api_key
                     http_client.headers['Api-Time'] = str(current_time)
                     http_client.headers['Api-Hash'] = api_hash
@@ -643,9 +646,10 @@ class Tapper:
 
     async def alliance_info(
         self,
-        http_client: CloudflareScraper
+        http_client: CloudflareScraper,
+        alliance_admin_uid: int
     ) -> Optional[dict]:
-        payload = {"data": str(self.tg_account_info.id)}
+        payload = {"data": str(alliance_admin_uid)}
         response = await self.make_request(http_client=http_client, method="POST", url=allianceInfoByUser_api, payload=payload, api_key=self.api_key)
         return response
 
@@ -686,7 +690,7 @@ class Tapper:
         key: str,
         position: int
     ) -> Optional[dict]:
-        payload = {"data": {"position": position, "animalKey": key}}
+        payload = {"data": {"position": int(position), "animalKey": key}}
         response = await self.make_request(http_client=http_client, method="POST", url=buyAnimal_api, payload=payload, api_key=self.api_key, sleep=10)
         return response
 
@@ -697,7 +701,7 @@ class Tapper:
         payload = {"data": "instant"}
         response = await self.make_request(http_client=http_client, method="POST", url=autoFeedBuy_api, payload=payload, api_key=self.api_key, sleep=10)
         return response
-    
+
     async def join_alliance(
         self,
         http_client: CloudflareScraper,
@@ -706,19 +710,52 @@ class Tapper:
         payload = {"data": alliance_id}
         response = await self.make_request(http_client=http_client, method="POST", url=allianceJoin_api, payload=payload, api_key=self.api_key, sleep=10)
         return response
-        
+
+    async def donate_alliance(
+        self,
+        http_client: CloudflareScraper,
+        amount: int
+    ) -> Optional[dict]:
+        payload = {"data": amount}
+        response = await self.make_request(http_client=http_client, method="POST", url=allianceDonate_api, payload=payload, api_key=self.api_key, sleep=10)
+        return response
+
+    async def chest_claimer(
+        self,
+        http_client: CloudflareScraper,
+        data: dict
+    ) -> None:
+        key = data.get('key', None)
+        current_time = int(time())
+        actionTo = data.get('actionTo', None)
+        reward = data.get('reward', 0)
+        title = key.replace('_', '-')
+        actionTo_timestamp = convert_utc_to_local(actionTo)
+        if self.multi_thread:
+            if actionTo_timestamp > current_time:
+                wait = int(actionTo_timestamp - current_time) + randint(10, 50)
+                logger.info(
+                    f"{self.session_name} | Chest task is in background, it will available in: <e>{wait / 60 :.2f}</e> minutes")
+                await asyncio.sleep(wait)
+        else:
+            if actionTo_timestamp > current_time:
+                return
+        claim = await self.quest_claimer(http_client=http_client, key=key, code=False)
+        if claim:
+            logger.success(
+                f"{self.session_name} | Quest <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
+
     async def buy_manager(
         self,
         http_client: CloudflareScraper,
         dbAnimals: dict
     ) -> None:
 
-        available_animals = [Animal for Animal in dbAnimals if f"{self.user_id}__{Animal['key']}" not in {
-            animal["id"] for animal in self.animals}]
+        available_animals = [Animal for Animal in dbAnimals if Animal['key'] not in [animal["key"] for animal in self.animals]]
 
         level = 1
         best_animal = best_animals(
-            coins=self.coins, level=level, dbAnimals=dbAnimals)
+            coins=self.coins, level=level, dbAnimals=available_animals)
 
         for x in best_animal:
 
@@ -731,16 +768,14 @@ class Tapper:
             profit = x['profit']
             used_positions = [animal["position"] for animal in self.animals]
 
-            if int(settings.COIN_TO_SAVE) < self.coins and int(self.coins - int(settings.COIN_TO_SAVE)) >= price:
+            if int(settings.COIN_TO_SAVE) < self.coins and int(self.coins - price) >= int(settings.COIN_TO_SAVE):
                 random_position = choice(
-                    [n for n in range(1, 31) if n not in used_positions])
+                    [n for n in range(1, 38) if n not in used_positions])
                 buy_res = await self.buy_animal(http_client=http_client, key=key, position=random_position)
                 if buy_res.get("success", False):
-                    self.coins = int(buy_res.get("data", {}).get(
-                        'hero', {}).get('coins', self.coins))
+                    self.coins = int(buy_res.get("data", {}).get('hero', {}).get('coins', 0))
                     self.animals = buy_res.get("data", {}).get('animals', {})
-                    self.tph = int(buy_res.get("data", {}).get(
-                        'hero', {}).get('tph', 0))
+                    self.tph = int(buy_res.get("data", {}).get('hero', {}).get('tph', 0))
                     logger.success(
                         f"{self.session_name} | Purchased animal <g>{title}</g> | Cost: <r>-{format_number(price)}</r> coin | TPH: <g>+{format_number(profit)}</g> | Available Coin: <g>{format_number(self.coins)}</g>")
 
@@ -761,18 +796,15 @@ class Tapper:
             nextLevel = int(level + 1)
             nextLevelData = next(
                 (level for level in animal_data["levels"] if level["level"] == nextLevel), None)
-            if animal_data and nextLevelData and int(settings.COIN_TO_SAVE) < self.coins and int(self.coins - int(settings.COIN_TO_SAVE)) >= int(nextLevelData["price"]):
+            if animal_data and nextLevelData and int(settings.COIN_TO_SAVE) < self.coins and int(self.coins - int(nextLevelData["price"])) >= int(settings.COIN_TO_SAVE):
                 upgrade_animal = await self.buy_animal(http_client=http_client, key=key, position=position)
                 if upgrade_animal.get("success", False):
                     title = animal_data.get('title', 'Not Found')
                     price = nextLevelData.get('price', 0)
                     profit = nextLevelData.get('profit', 0)
-                    self.coins = int(upgrade_animal.get("data", {}).get(
-                        'hero', {}).get('coins', self.coins))
-                    self.animals = upgrade_animal.get(
-                        "data", {}).get('animals', {})
-                    self.tph = int(upgrade_animal.get(
-                        "data", {}).get('hero', {}).get('tph', 0))
+                    self.coins = int(upgrade_animal.get("data", {}).get('hero', {}).get('coins', self.coins))
+                    self.animals = upgrade_animal.get("data", {}).get('animals', {})
+                    self.tph = int(upgrade_animal.get("data", {}).get('hero', {}).get('tph', 0))
                     logger.success(
                         f"{self.session_name} | Upgraded animal <g>{title}</g> Level <g>{level}</g> to <g>{nextLevel}</g> | Cost: <r>-{format_number(price)}</r> coin | TPH: <g>+{format_number(profit)}</g> | Available Coin: <g>{format_number(self.coins)}</g>")
 
@@ -781,6 +813,7 @@ class Tapper:
         user_agent: str,
         proxy: str | None
     ) -> None:
+        global background_task
         if settings.USE_RANDOM_DELAY_IN_RUN:
             random_delay = randint(
                 settings.START_DELAY[0], settings.START_DELAY[1])
@@ -810,6 +843,7 @@ class Tapper:
                 can_run = True
                 try:
                     end_at = 3600 * 3
+                    isDailyClaimed = False
                     if await safety_checker(self.session_name) is False:
 
                         can_run = False
@@ -831,7 +865,7 @@ class Tapper:
                                 f"{self.session_name} | Login Successful")
 
                         ### Alliance Info ###
-                        alliance_info = await self.alliance_info(http_client=http_client)
+                        alliance_info = await self.alliance_info(http_client=http_client, alliance_admin_uid=str(self.tg_account_info.id))
 
                         ### All Data ###
                         all_data = await self.data_all(http_client=http_client)
@@ -853,7 +887,7 @@ class Tapper:
                             dbAutoFeed = dbData.get('dbAutoFeed', [])
                             self.feedData = all_data_.get('feed', {})
                             self.alliance = all_data_.get('alliance', {})
-                            
+
                         ### Define User id ###
                         self.user_id = profile["id"]
 
@@ -886,12 +920,14 @@ class Tapper:
                                 if claim_data.get('success', None):
                                     if claim_data['data']["dailyRewards"][str(day)] == "taken":
                                         self.coins = claim_data['data']['hero']["coins"]
-                                        logger.info(
+                                        logger.success(
                                             f"{self.session_name} | <g>Daily Claimed</g> - day: <g>{day}</g> - rewarded: <g>+{format_number(reward)}</g>")
+                                        isDailyClaimed = True
 
                         ### Alliance info ###
                         if self.alliance:
-                            allianceName = self.alliance.get("name", "Not Found")
+                            allianceName = self.alliance.get(
+                                "name", "Not Found")
                             allianceLevel = self.alliance.get("level", 0)
                             logger.info(
                                 f"{self.session_name} | Alliance Name: <g>{allianceName}</g> - Level: <g>{allianceLevel}</g>")
@@ -900,24 +936,37 @@ class Tapper:
                                 alliance_id = int(settings.ALLIANCE_ID)
                                 join_res = await self.join_alliance(http_client=http_client, alliance_id=alliance_id)
                                 if join_res.get('success', None):
-                                    hero = join_res.get('data', {}).get('hero', {})
-                                    self.alliance = join_res.get('data', {}).get('alliance', {})
+                                    hero = join_res.get(
+                                        'data', {}).get('hero', {})
+                                    self.alliance = join_res.get(
+                                        'data', {}).get('alliance', {})
                                     tphAlliance = hero.get('tphAlliance', 0)
                                     self.coins = hero.get('coins', self.coins)
                                     enterFee = self.alliance.get('enterFee', 0)
                                     name = self.alliance.get('name', 0)
                                     logger.success(
                                         f"{self.session_name} | <g>Successfully Joined Alliance</g> | Name: <g>{name}</g> | Cost: <r>-{format_number(enterFee)}</r> | TPH: <g>+{format_number(tphAlliance)}</g>")
-                                else:
-                                    logger.warning(
-                                        f"{self.session_name} | Something went wrong while joining alliance. response: {join_res}")
+
                             elif int(settings.ALLIANCE_JOIN_FEE) >= 1000:
                                 logger.warning(
                                     f"{self.session_name} | Alliance join fee should be 1000 or max")
-                            elif int(settings.ALLIANCE_JOIN_FEE) > self.coins:
-                                logger.info(
-                                    f"{self.session_name} | Insufficient balance to join alliance")
-                            
+
+                        ### Donate to the alliance to gain extra TPH ###
+                        if settings.DONATE_TO_ALLIANCE and isDailyClaimed:
+                            amount = choice(
+                                range(
+                                    settings.DONATE_AMOUNT[0],
+                                    settings.DONATE_AMOUNT[1],
+                                    5
+                               )
+                            )
+                            if (settings.COIN_TO_SAVE < self.coins) and (self.coins > amount):
+                                donate = await self.donate_alliance(http_client=http_client, amount=amount)
+                                if donate.get('success', None):
+                                    self.coins = donate["data"]["hero"]["coins"]
+                                    logger.success(
+                                        f"{self.session_name} | Donated <g>{format_number(amount)}</g> Coin to level up Alliance | Available Coins: <g>{format_number(self.coins)}</g>")
+
                         ### Quests Progress ###
                         QuestsProgress = await self.quests_progress(http_client=http_client)
                         CompleatedQuestsList = []
@@ -935,7 +984,7 @@ class Tapper:
                                     type_ = Quest.get("checkType")
                                     symbol = Quest.get("checkData")
                                     if claim:
-                                        logger.info(
+                                        logger.success(
                                             f"{self.session_name} | Quest <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
                                         if type_ == "username":
                                             await self.remove_symbol(symbol=symbol)
@@ -952,7 +1001,7 @@ class Tapper:
                                 title = Quiz.get("title", "Not Found")
                                 reward = Quiz.get("reward", 0)
                                 if claim.get('success', None):
-                                    logger.info(
+                                    logger.success(
                                         f"{self.session_name} | Quiz <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
                                     self.coins = claim['data']['hero']["coins"]
 
@@ -968,18 +1017,20 @@ class Tapper:
                                 end_time = convert_utc_to_local(end_time_str)
                                 current_time = int(time())
 
+                                QuestType = Quest.get("checkType", None)
+                                reward = Quest.get("reward", 0)
+                                key = Quest.get("key", None)
+                                title = Quest.get("title", "Not Found")
+
                                 if (
-                                    Quest["key"] not in CompleatedQuestsList
-                                    and Quest["checkType"] in settings.TO_DO_QUEST
-                                    and Quest["checkType"] not in settings.NOT_TO_DO_QUEST
-                                    # and "boost" not in str(Quest["key"])
+                                    key not in CompleatedQuestsList
+                                    and QuestType in settings.TO_DO_QUEST
+                                    and QuestType not in settings.NOT_TO_DO_QUEST
+                                    # and "boost" not in str(key)
                                     and start_time <= current_time and end_time >= current_time
                                 ):
-                                    reward = Quest["reward"]
-                                    key = Quest["key"]
-                                    title = Quest.get("title", "Not Found")
 
-                                    if Quest["checkType"] == "telegramChannel":
+                                    if QuestType == "telegramChannel":
                                         actionUrl = Quest["actionUrl"]
                                         await self.join_tg_channel(actionUrl)
                                         check_tg = await self.check_quest(http_client=http_client, key=key)
@@ -988,23 +1039,27 @@ class Tapper:
                                                 f"{self.session_name} | Quest <g>{title}</g> checked")
                                             claim_tg = await self.quest_claimer(http_client=http_client, key=key)
                                             if claim_tg:
-                                                logger.info(
+                                                logger.success(
                                                     f"{self.session_name} | Quest <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
 
-                                    if Quest["checkType"] == "ton_wallet_connect":
+                                    if QuestType == "ton_wallet_connect":
                                         pass  # -_-
 
-                                    if Quest["checkType"] == "fakeCheck":
-                                        code = True if "chest" not in Quest.get(
-                                            'key', "") else False
-                                        title = key.replace(
-                                            '_', '-') if not code else title
-                                        claim_fake = await self.quest_claimer(http_client=http_client, key=key, code=code)
-                                        if claim_fake:
-                                            logger.info(
-                                                f"{self.session_name} | Quest <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
+                                    if QuestType == "fakeCheck":
 
-                                    if Quest["checkType"] == "checkCode":
+                                        if key.startswith("chest_"):
+                                            if self.multi_thread:
+                                                background_task = asyncio.create_task(
+                                                    self.chest_claimer(http_client=http_client, data=Quest))
+                                            else:
+                                                await self.chest_claimer(http_client=http_client, data=Quest)
+                                        else:
+                                            claim_fake = await self.quest_claimer(http_client=http_client, key=key)
+                                            if claim_fake:
+                                                logger.success(
+                                                    f"{self.session_name} | Quest <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
+
+                                    if QuestType == "checkCode":
                                         code = Quest["checkData"]
                                         check_code = await self.check_quest(http_client=http_client, key=key, code=code)
                                         if check_code.get("success", None) and check_code.get("data", {}).get("result", False):
@@ -1012,10 +1067,10 @@ class Tapper:
                                                 f"{self.session_name} | Quest <g>{title}</g> checked")
                                             claim_code = await self.quest_claimer(http_client=http_client, key=key, code=code)
                                             if claim_code:
-                                                logger.info(
+                                                logger.success(
                                                     f"{self.session_name} | Quest <g>{title}</g> claimed | Code: <g>{code}</g> | rewarded: <g>+{format_number(reward)}</g>")
 
-                                    if Quest["checkType"] == "username":
+                                    if QuestType == "username":
                                         symbol = Quest["checkData"]
                                         await self.change_name(symbol=symbol)
 
@@ -1035,7 +1090,7 @@ class Tapper:
                                     if set_quiz.get('success', False):
                                         claim = await self.claim_quiz(http_client=http_client, key=key)
                                         if claim.get('success', False):
-                                            logger.info(
+                                            logger.success(
                                                 f"{self.session_name} | Quiz <g>{title}</g> claimed | rewarded: <g>+{format_number(reward)}</g>")
                                             self.coins = claim['data']['hero']["coins"]
 
@@ -1105,6 +1160,11 @@ class Tapper:
                         logger.info(
                             f"{self.session_name} | 🕦 Sleep <y>{sleep}</y> min")
                         await asyncio.sleep(sleep * 60)
+                        if background_task is not None and not background_task.done():
+                            background_task.cancel()
+                            logger.info(
+                                f"{self.session_name} | Background task stopped.")
+
                     else:
                         logger.info(
                             f"{self.session_name} | <m>==== Completed ====</m>")

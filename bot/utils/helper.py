@@ -50,7 +50,7 @@ def best_animals(
                         'dateStart': animal['dateStart'],
                         'dateEnd': animal['dateEnd']
                     })
-    best_options.sort(key=lambda x: x['profit'], reverse=True)
+    best_options.sort(key=lambda x: x['profit'], reverse=False)
     return best_options
 
 

@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     AUTO_JOIN_ALLIANCE: bool = True
     ALLIANCE_JOIN_FEE: int = 1000
     ALLIANCE_ID: int = 2150
-    
+
+    DONATE_TO_ALLIANCE: int = True
+    DONATE_AMOUNT: list[int] = [500, 1000]
+
     AUTO_DO_TASKS: bool = True
     AUTO_DO_QUIZZES: bool = True
 
@@ -21,7 +24,7 @@ class Settings(BaseSettings):
     ARCHIVE_CHANNELS: bool = False
 
     AUTO_BUY_ANIMALS: bool = True
-    MAX_ANIMALS: int = 10
+    MAX_ANIMALS: int = 15
 
     AUTO_UPGRADE_ANIMALS: bool = True
 
