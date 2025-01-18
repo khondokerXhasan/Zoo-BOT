@@ -1116,7 +1116,8 @@ class Tapper:
                         elif TOSS == "K":
                             # I Don't Know
                             await self.onboarding(http_client=http_client, onboarding_id=30)
-
+                        else:
+                            await self.onboarding(http_client=http_client, onboarding_id=70)
                         if settings.AUTO_UPGRADE_ANIMALS:
                             await self.upgrade_manager(http_client=http_client, dbAnimals=dbAnimals)
 
