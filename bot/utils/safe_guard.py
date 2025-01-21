@@ -70,8 +70,6 @@ API_ENDPOINTS = [
     r'/ton/wallet/info',
     r'/ton/wallet/save',
     r'/ton/wallet/validate',
-    r'/ton/wallet/transaction/check',
-    r'/coins/ton/transactions',
     r'/quiz/result/set',
     r'/quiz/claim',
     r'/autofeed/buy',
