@@ -1116,8 +1116,11 @@ class Tapper:
                         elif TOSS == "K":
                             # I Don't Know
                             await self.onboarding(http_client=http_client, onboarding_id=30)
-                        else:
+                        elif TOSS == "E":
                             await self.onboarding(http_client=http_client, onboarding_id=70)
+                        else:
+                            await self.onboarding(http_client=http_client, onboarding_id=80)
+
                         if settings.AUTO_UPGRADE_ANIMALS:
                             await self.upgrade_manager(http_client=http_client, dbAnimals=dbAnimals)
 
@@ -1132,6 +1135,7 @@ class Tapper:
                             else:
                                 await self.onboarding(http_client=http_client, onboarding_id=20)
 
+                            nextFeedTime = self.feedData.get('autoFeedEndDate')
                             if isNeedFeed:
                                 feedRes = await self.buy_autofeed(http_client=http_client)
                                 if feedRes.get('success', False):
@@ -1141,6 +1145,7 @@ class Tapper:
                                     self.feedData = feedRes.get(
                                         'data', {}).get('feed', {})
                                     cost = self.coins - int(coin)
+                                    nextFeedTime = self.feedData.get('autoFeedEndDate')
                                     logger.success(
                                         f"{self.session_name} | <g>Purchased AutoFeed</g> | Cost: <r>-{format_number(cost)}</r> coin")
 
@@ -1150,7 +1155,7 @@ class Tapper:
                             else:
                                 logger.info(
                                     f"{self.session_name} | Auto Feeding in progress... ")
-                            nextFeedTime = self.feedData.get('nextFeedTime')
+                            #nextFeedTime = self.feedData.get('autoFeedEndDate')
                             nextFeedTimestamp = convert_utc_to_local(
                                 nextFeedTime)
                             current_time = int(time())
